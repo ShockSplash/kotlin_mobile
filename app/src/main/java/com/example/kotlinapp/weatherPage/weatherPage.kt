@@ -21,6 +21,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.graphics.BitmapFactory
+import android.location.LocationListener
+import android.location.LocationManager
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.MaterialTheme.typography
@@ -35,8 +37,16 @@ import java.net.URL
 import java.time.*
 
 
+private val gpsLocationListener = object : LocationListener {
+    var cachedLocation: Location? = null
+
+    override fun onLocationChanged(location: Location) {
+        cachedLocation = location
+    }
+}
+
 @SuppressLint("DiscouragedApi", "UnrememberedMutableState", "CoroutineCreationDuringComposition",
-    "SimpleDateFormat"
+    "SimpleDateFormat", "ServiceCast"
 )
 @Composable
 fun WeatherAppUserScreen() {
@@ -44,6 +54,14 @@ fun WeatherAppUserScreen() {
     val cityState = remember { mutableStateOf("") }
     val locationState = remember { mutableStateOf<Location?>(null) }
     val context = LocalContext.current
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    try {
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER,
+            1000, 0f, gpsLocationListener)
+    }
+    catch (e: SecurityException){
+
+    }
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) } //объект для получения текущей геопозиции. создается с помощью LocationServices.getFusedLocationProviderClient(context), где context - это контекст приложения.
     val PERMISSION_REQUEST_CODE = 1001 //это код запроса разрешения. Он используется при запросе разрешения на доступ к местоположению устройства. Значение 1001 просто выбрано в качестве уникального идентификатора для этого запроса разрешения.
     val coroutineScope = rememberCoroutineScope()
@@ -120,7 +138,7 @@ fun WeatherAppUserScreen() {
                 modifier = Modifier.padding(horizontal = 16.dp)
             ) {
                 Text(
-                    text = "Get Weather",
+                    text = "Получить погоду",
                     style = typography.body1,
                     color = Color.White
                 )
@@ -131,85 +149,33 @@ fun WeatherAppUserScreen() {
             onClick = {
                 weatherResponseState.value = null
                 hourlyForecastState.value = emptyList()
-                // Проверить разрешение ACCESS_FINE_LOCATION
-                if (checkPermission(Manifest.permission.ACCESS_FINE_LOCATION, context)) {
-                    // Запросить текущую геопозицию
-                    fusedLocationClient.lastLocation
-                        .addOnSuccessListener { location: Location? ->
-                            locationState.value = location
 
-                            location?.let { currentLocation ->
-                                val weatherApiClient =
-                                    WeatherApiClient("d87d2f8e4941f9a0c6dddf490d5780c8")
+                val weatherApiClient = WeatherApiClient("406e13154b45fb6e5c74e999da7e36be")
 
-                                coroutineScope.launch {
-                                    val weatherResult = withContext(Dispatchers.IO) {
-                                        weatherApiClient.getCurrentWeatherByCoordinates(
-                                            currentLocation.latitude,
-                                            currentLocation.longitude
-                                        )
-                                    }
+                coroutineScope.launch {
+                    val currentWeatherResult = withContext(Dispatchers.IO) {
+                        val location = gpsLocationListener.cachedLocation
+                        val lat = location?.latitude
+                        weatherApiClient.getCurrentWeatherByCoordinates(lat!!, location.longitude!!)
+                    }
 
-                                    when (weatherResult) {
-                                        is com.example.kotlinapp.wetherApi.Result.Success -> {
-                                            weatherResponseState.value = weatherResult.data
-                                        }
-                                        is com.example.kotlinapp.wetherApi.Result.Error -> {
-                                            Log.e(
-                                                "WeatherAppUserScreen",
-                                                "Ошибка при получении погоды: ${weatherResult.message}"
-                                            )
-                                        }
-                                        else -> {
-                                            Log.e(
-                                                "WeatherAppUserScreen",
-                                                "Unexpected result type: $weatherResult"
-                                            )
-                                        }
-                                    }
-
-                                    val forecastResult = withContext(Dispatchers.IO) {
-                                        weatherApiClient.getHourlyForecastByCoordinates(
-                                            currentLocation.latitude,
-                                            currentLocation.longitude
-                                        )
-                                    }
-
-                                    when (forecastResult) {
-                                        is com.example.kotlinapp.wetherApi.Result.Success -> {
-                                            hourlyForecastState.value =
-                                                forecastResult.data.hourlyForecasts
-                                        }
-                                        is com.example.kotlinapp.wetherApi.Result.Error -> {
-                                            Log.e(
-                                                "WeatherAppUserScreen",
-                                                "Ошибка при получении прогноза погоды на 24 часа: ${forecastResult.message}"
-                                            )
-                                        }
-                                        else -> {
-                                            Log.e(
-                                                "WeatherAppUserScreen",
-                                                "Unexpected result type: $forecastResult"
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                    when (currentWeatherResult) {
+                        is com.example.kotlinapp.wetherApi.Result.Success -> {
+                            weatherResponseState.value = currentWeatherResult.data
                         }
-                        .addOnFailureListener { exception: Exception ->
-                            // Обработка ошибки при получении геопозиции
+                        is com.example.kotlinapp.wetherApi.Result.Error -> {
                             Log.e(
                                 "WeatherAppUserScreen",
-                                "Ошибка при получении геопозиции: ${exception.message}"
+                                "Ошибка при получении погоды: ${currentWeatherResult.message}"
                             )
                         }
-                } else {
-                    // Запросить разрешение у пользователя
-                    requestPermission(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        PERMISSION_REQUEST_CODE,
-                        context
-                    )
+                        else -> {
+                            Log.e(
+                                "WeatherAppUserScreen",
+                                "Unexpected result type: $currentWeatherResult"
+                            )
+                        }
+                    }
                 }
             },
             modifier = Modifier.padding(bottom = 16.dp)
@@ -310,7 +276,6 @@ fun WeatherAppUserScreen() {
                 val dateTime =
                     Instant.ofEpochSecond(timestamp).atZone(ZoneId.systemDefault())
                         .toLocalDateTime()
-
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(bottom = 8.dp)
